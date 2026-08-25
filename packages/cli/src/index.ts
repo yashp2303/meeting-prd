@@ -20,7 +20,7 @@ import { ask, askSecret, confirm, choose, say, ok, fail, warn, info, heading, ta
 import { mergeStored, readStored, applyStoredToEnv, ENV_KEYS } from './config-file.js';
 import { runGoogleAuth, printGoogleSetupHelp } from './google-auth.js';
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 
 function cfg(): Config {
   resetConfigCache();

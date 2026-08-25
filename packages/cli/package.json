@@ -1,6 +1,6 @@
 {
   "name": "@meeting-prd/cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "bin": {
     "meeting-prd": "./dist/meeting-prd.js"
