@@ -25,9 +25,12 @@ jobs:
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # Until the app is deployed there is nothing to ping. Skip quietly
+          # rather than failing: this runs every 5 minutes, and a red cross on
+          # every run trains you to ignore the one that actually matters.
           if [ -z "$APP_BASE_URL" ]; then
-            echo "::error::APP_BASE_URL secret is not set. Add it in Settings > Secrets > Actions."
-            exit 1
+            echo "::notice::APP_BASE_URL is not set — skipping. Add it under Settings > Secrets and variables > Actions once the app is deployed."
+            exit 0
           fi
 
           response=$(curl -sS -w '\n%{http_code}' -X POST \
