@@ -20,7 +20,7 @@ import { ask, askSecret, confirm, choose, say, ok, fail, warn, info, heading, ta
 import { mergeStored, readStored, applyStoredToEnv, ENV_KEYS } from './config-file.js';
 import { runGoogleAuth, printGoogleSetupHelp } from './google-auth.js';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 
 function cfg(): Config {
   resetConfigCache();
@@ -203,29 +203,62 @@ async function cmdInit() {
   const cuToken = await askSecret('ClickUp API token', existing.CLICKUP_API_TOKEN ?? '');
   if (cuToken) {
     patch.CLICKUP_API_TOKEN = cuToken;
-    const teamId = await ask('ClickUp workspace (team) ID', existing.CLICKUP_TEAM_ID ?? '');
-    if (teamId) patch.CLICKUP_TEAM_ID = teamId;
 
-    try {
-      const lists = await spin('reading your spaces and lists…', () =>
-        clickup.discoverLists({ ...cfg(), clickupApiToken: cuToken, clickupTeamId: teamId }),
+    say('');
+    say(c.grey('  Open the ClickUp list you want tickets created in and copy its URL'));
+    say(c.grey('  from the address bar, e.g. https://app.clickup.com/9016.../v/l/...'));
+    const url = await ask('ClickUp list URL', existing.CLICKUP_LIST_ID ?? '');
+
+    let resolved = false;
+    if (url) {
+      const parsed = clickup.parseClickUpUrl(url);
+      if (parsed.teamId) patch.CLICKUP_TEAM_ID = parsed.teamId;
+
+      const target = await spin('resolving that URL…', () =>
+        clickup.resolveListFromUrl(url, {
+          ...cfg(),
+          clickupApiToken: cuToken,
+          clickupTeamId: parsed.teamId ?? '',
+        }).catch(() => null),
       );
-      if (!lists.length) {
-        warn('No lists found in that workspace. Create one in ClickUp, then re-run init.');
+
+      if (target) {
+        patch.CLICKUP_LIST_ID = target.listId;
+        ok(`Tickets will be created in "${target.listName}"${target.via === 'view' ? ' (via that view)' : ''}.`);
+        resolved = true;
       } else {
-        ok(`Found ${lists.length} list(s).`);
-        patch.CLICKUP_LIST_ID = await choose(
-          'Which list should tickets be created in?',
-          lists.slice(0, 40).map((l) => ({
-            label: `${l.spaceName}${l.folderName ? ` / ${l.folderName}` : ''} / ${c.bold(l.listName)}`,
-            value: l.listId,
-            hint: l.listId,
-          })),
-        );
+        warn('That URL did not resolve to a writable list — it may point at a space or board.');
       }
-    } catch (err) {
-      fail(`ClickUp rejected that token: ${err instanceof Error ? err.message : err}`);
-      warn('Run `meeting-prd clickup:discover` later to finish this step.');
+    }
+
+    // Fall back to showing every list, so a URL that cannot be resolved is
+    // never a dead end.
+    if (!resolved) {
+      try {
+        const lists = await spin('reading your spaces and lists…', () =>
+          clickup.discoverLists({
+            ...cfg(),
+            clickupApiToken: cuToken,
+            clickupTeamId: patch.CLICKUP_TEAM_ID ?? '',
+          }),
+        );
+        if (!lists.length) {
+          warn('No lists found. Create one in ClickUp, then re-run init.');
+        } else {
+          patch.CLICKUP_LIST_ID = await choose(
+            'Pick the list to create tickets in',
+            lists.slice(0, 40).map((l) => ({
+              label: `${l.spaceName}${l.folderName ? ` / ${l.folderName}` : ''} / ${c.bold(l.listName)}`,
+              value: l.listId,
+              hint: l.listId,
+            })),
+          );
+          ok('Saved.');
+        }
+      } catch (err) {
+        fail(`ClickUp rejected that token: ${err instanceof Error ? err.message : err}`);
+        warn('Run `meeting-prd clickup:discover` later to finish this step.');
+      }
     }
   } else {
     warn('Skipped — approved PRDs will have nowhere to go.');
@@ -249,14 +282,35 @@ async function cmdInit() {
   say('');
   await cmdDoctor();
 
+  const missing = checkConfig(cfg()).filter((x) => x.required && !x.ok);
+
+  if (missing.length === 0) {
+    say('');
+    ok('Everything is configured.');
+    say('');
+    if (await confirm('Start watching your calendar now?')) {
+      closePrompts();
+      say('');
+      await cmdWatch(['5']);
+      return; // cmdWatch runs forever
+    }
+    say('');
+    say(c.bold('  When you are ready'));
+    table([
+      ['meeting-prd watch', 'run every 5 minutes in this terminal'],
+      ['meeting-prd tick', 'run one pass now'],
+      ['meeting-prd status', 'see tracked meetings'],
+      ['meeting-prd env --vercel', 'env vars for deploying'],
+    ]);
+    say('');
+    return;
+  }
+
   say('');
-  say(c.bold('  Next steps'));
-  table([
-    ['meeting-prd tick', 'run the pipeline once, now'],
-    ['meeting-prd watch', 'run it every 5 minutes locally'],
-    ['meeting-prd env --vercel', 'print the env vars for your Vercel project'],
-    ['meeting-prd status', 'see tracked meetings'],
-  ]);
+  warn(`Not ready to start — ${missing.length} required setting(s) still missing:`);
+  for (const m of missing) say(`    ${c.red('✗')} ${m.label.padEnd(24)} ${c.grey(m.hint)}`);
+  say('');
+  say(c.grey('  Re-run `meeting-prd init` once you have them, and it will start.'));
   say('');
 }
 

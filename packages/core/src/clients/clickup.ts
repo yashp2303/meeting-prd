@@ -126,6 +126,94 @@ export async function verifyList(listId: string, cfg: Config = getConfig()): Pro
   return api<Named>(`/list/${listId}`, {}, cfg);
 }
 
+export interface ParsedClickUpUrl {
+  teamId?: string;
+  /** Every numeric id in the URL, most specific first. */
+  candidates: string[];
+}
+
+/**
+ * Pulls ids out of a pasted ClickUp URL.
+ *
+ * ClickUp has many URL shapes — `/{team}/v/l/{view}`, `/{team}/v/li/{list}`,
+ * `/{team}/v/l/t/{id}`, `/t/{task}` — and the trailing id is sometimes a list
+ * and sometimes a view. Rather than encode every variant, collect the numeric
+ * ids and let `resolveListFromUrl` ask the API which one is real.
+ */
+export function parseClickUpUrl(input: string): ParsedClickUpUrl {
+  const trimmed = input.trim();
+
+  // A bare id pasted instead of a URL.
+  if (/^\d+$/.test(trimmed)) return { candidates: [trimmed] };
+
+  let path = trimmed;
+  try {
+    path = new URL(trimmed).pathname;
+  } catch {
+    /* not a full URL — treat the whole string as a path */
+  }
+
+  const segments = path.split('/').filter(Boolean);
+  const numeric = segments.filter((s) => /^\d{5,}$/.test(s));
+
+  // The first long numeric segment is the workspace; later ones are more
+  // specific, so search them first.
+  const teamId = numeric[0];
+  // Reversed so the most specific id is tried first; deduped because URLs like
+  // /{team}/v/l/t/{team} repeat the same id and would double the API calls.
+  const candidates = [...new Set([...numeric].reverse())];
+
+  return { teamId, candidates };
+}
+
+export interface ResolvedTarget {
+  listId: string;
+  listName: string;
+  via: 'list' | 'view';
+}
+
+/**
+ * Turns a pasted ClickUp URL into a writable list id.
+ *
+ * Tries each id in the URL as a list, then as a view (resolving the view's
+ * parent list). Returns null if none resolve, so the caller can fall back to
+ * showing a picker.
+ */
+export async function resolveListFromUrl(
+  input: string,
+  cfg: Config = getConfig(),
+): Promise<ResolvedTarget | null> {
+  const { candidates } = parseClickUpUrl(input);
+
+  for (const id of candidates) {
+    try {
+      const list = await api<Named>(`/list/${id}`, {}, cfg);
+      if (list?.id) return { listId: list.id, listName: list.name, via: 'list' };
+    } catch {
+      /* not a list — try it as a view */
+    }
+
+    try {
+      const res = await api<{ view?: { id: string; name: string; parent?: { id: string; type: number } } }>(
+        `/view/${id}`,
+        {},
+        cfg,
+      );
+      const parent = res.view?.parent;
+      // parent.type 6 is a List; anything else (space, folder) has no single
+      // list to write to, so let the caller pick.
+      if (parent?.id && parent.type === 6) {
+        const list = await api<Named>(`/list/${parent.id}`, {}, cfg);
+        return { listId: list.id, listName: list.name, via: 'view' };
+      }
+    } catch {
+      /* not a view either */
+    }
+  }
+
+  return null;
+}
+
 // --- Writing --------------------------------------------------------------
 
 interface CreateTaskInput {
