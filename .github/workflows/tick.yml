@@ -1,14 +1,17 @@
 name: pipeline tick
 
-# Vercel's Hobby plan limits Cron to one run per day, which is far too slow for
-# a pipeline that has to catch a meeting starting and poll its transcript. This
-# workflow is the real driver: GitHub Actions schedules are free at 5-minute
-# granularity. Delete this file if you upgrade to Vercel Pro and rely on
-# vercel.json's crons block instead.
+# Manual only. The 5-minute schedule that used to live here was removed: it
+# pings a URL that has to exist, so on a repo with nothing deployed it produced
+# a failed run every 5 minutes and nothing else.
+#
+# To turn it back on once the app is deployed, restore the `schedule:` block
+# below and set the APP_BASE_URL secret. Vercel Cron is not a substitute on the
+# Hobby plan — it is capped at one run per day.
+#
+#   schedule:
+#     - cron: '*/5 * * * *'
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:
