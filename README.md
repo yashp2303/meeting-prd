@@ -19,9 +19,30 @@ underneath those.
 
 ```sh
 brew tap yashp2303/tap
+brew trust yashp2303/tap    # Homebrew 6 requires this once per third-party tap
 brew install meeting-prd
 meeting-prd init
 ```
+
+<details>
+<summary><code>Error: Your Command Line Tools are too outdated</code></summary>
+
+Homebrew requires current Command Line Tools before installing any formula that
+is not bottled. Unrelated to this package — fix it once:
+
+```sh
+sudo rm -rf /Library/Developer/CommandLineTools
+sudo xcode-select --install
+```
+
+Or install without Homebrew — the CLI is a single file that needs only node:
+
+```sh
+curl -fsSL -o /usr/local/bin/meeting-prd \
+  https://github.com/yashp2303/meeting-prd/releases/download/v0.1.0/meeting-prd.js
+chmod +x /usr/local/bin/meeting-prd
+```
+</details>
 
 `init` is an interactive wizard. It asks for each credential in turn and **verifies every one against
 its live API before saving**, so a typo fails at setup rather than silently at 9am during a standup.
