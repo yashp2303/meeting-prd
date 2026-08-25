@@ -33,18 +33,35 @@ jobs:
             exit 0
           fi
 
+          # `bash -e` would abort on curl's exit status before the HTTP code is
+          # ever inspected, turning "host unreachable" into a bare exit 6.
+          # Capture the status instead and report something legible.
+          set +e
           response=$(curl -sS -w '\n%{http_code}' -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             --max-time 300 \
-            "$APP_BASE_URL/api/cron/tick")
+            "$APP_BASE_URL/api/cron/tick" 2>&1)
+          curl_status=$?
+          set -e
 
           body=$(echo "$response" | sed '$d')
           code=$(echo "$response" | tail -n1)
+
+          if [ "$curl_status" -ne 0 ]; then
+            echo "$body"
+            case "$curl_status" in
+              6)  echo "::error::Could not resolve $APP_BASE_URL — the host no longer exists. If this was a temporary tunnel it has expired; update the APP_BASE_URL secret." ;;
+              7)  echo "::error::Connection refused by $APP_BASE_URL — the app is not listening." ;;
+              28) echo "::error::Timed out after 300s pinging $APP_BASE_URL." ;;
+              *)  echo "::error::curl failed with status $curl_status pinging $APP_BASE_URL." ;;
+            esac
+            exit 1
+          fi
 
           echo "$body"
           echo "HTTP $code"
 
           if [ "$code" != "200" ]; then
-            echo "::error::Tick failed with HTTP $code"
+            echo "::error::Tick returned HTTP $code"
             exit 1
           fi
