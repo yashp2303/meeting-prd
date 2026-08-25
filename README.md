@@ -134,6 +134,7 @@ working after 7 days. Setup stays at "paste one webhook URL".
 | `GROQ_TPM_LIMIT` | `8000` | your tier's tokens-per-minute cap |
 | `VEXA_API_KEY` | — | required |
 | `VEXA_BASE_URL` | `https://api.cloud.vexa.ai` | point at `http://localhost:18056` to self-host |
+| `VEXA_WEBHOOK_SECRET` | — | `whsec_…` from Vexa → Webhooks. Without it the endpoint accepts unsigned posts |
 | `GOOGLE_CLIENT_ID` / `_SECRET` / `_REFRESH_TOKEN` | — | `meeting-prd google:auth` mints the token |
 | `GOOGLE_CALENDAR_ID` | `primary` | |
 | `SLACK_WEBHOOK_URL` | — | approval requests land here |
@@ -188,6 +189,8 @@ write longer PRDs before truncating.
 | --- | --- |
 | `GET /` | dashboard — every tracked meeting and its stage |
 | `GET /prd/<id>` | full PRD, with approve and reject buttons |
+| `POST /api/webhooks/vexa` | Vexa event receiver; HMAC-verified |
+| `GET /api/webhooks/vexa` | reachability + whether signature checking is on |
 | `POST /api/cron/tick` | one pipeline pass; bearer-guarded |
 | `GET /api/decision?token=` | the signed Slack link target |
 | `GET /api/health` | config and connectivity report |
@@ -204,15 +207,45 @@ stage, so overlapping ticks cannot double-publish.
 | --- | --- |
 | `scheduled` | found on the calendar with a Meet link |
 | `dispatched` | within `LOOKAHEAD_MINUTES` of the start, bot sent to Vexa |
-| `recording` | transcript segments are arriving |
-| `transcribed` | past the scheduled end, or transcript static for `IDLE_TIMEOUT_MINUTES` |
+| `recording` | `meeting.started` webhook, or transcript segments arriving |
+| `transcribed` | `meeting.completed` webhook, or past the scheduled end, or transcript static for `IDLE_TIMEOUT_MINUTES` |
 | `drafted` | Groq returned a valid PRD |
 | `awaiting_approval` | posted to Slack |
 | `approved` / `rejected` | someone clicked |
 | `published` | ClickUp tickets created |
 
-**Vexa has no outbound webhooks** — transcripts are poll-only. That is the reason the whole system is
-driven by a repeating tick rather than by callbacks.
+### Webhooks vs the tick
+
+Both paths exist and they overlap deliberately.
+
+**The webhook is the fast path.** When Vexa fires `meeting.completed`, the PRD is generated and sent
+to Slack within seconds. Configure it at Vexa → Webhooks:
+
+| Field | Value |
+| --- | --- |
+| Endpoint URL | `https://<your-app>/api/webhooks/vexa` |
+| Signing Secret | copy the `whsec_…` value into `VEXA_WEBHOOK_SECRET` |
+| Events | `meeting.completed` (required), `bot.failed` and `meeting.started` (recommended) |
+
+`GET /api/webhooks/vexa` returns whether signature verification is active, which is a quicker check
+than sending a delivery.
+
+> **Vexa's Delivery History panel shows zero even for successful deliveries** — a known Vexa bug
+> ([issue #841](https://docs.vexa.ai/webhooks)). Do not read an empty history as "nothing was
+> delivered." Check your app logs instead.
+
+Vexa does not document its signature scheme. The `whsec_` prefix is the
+[Standard Webhooks](https://docs.svix.com/receiving/verifying-payloads/how-manual) convention, so
+that is tried first — HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{body}` — with plain
+raw-body HMAC variants behind it. A request matching none of them is rejected **and logs the header
+names it did carry**, so an unexpected scheme is a quick fix rather than a silent outage. The
+implementation is verified against the official Standard Webhooks test vector, including tampering
+and replay.
+
+**The tick is the safety net**, and is still required: meetings have to be discovered on the
+calendar and bots dispatched before any webhook can fire. It also recovers meetings that started
+before the webhook was configured, deliveries lost while the app was down, and self-hosted Vexa
+setups with no public URL to deliver to.
 
 ---
 

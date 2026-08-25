@@ -5,6 +5,7 @@ export * from './security.js';
 export * from './store.js';
 export * from './prd.js';
 export * from './pipeline.js';
+export * from './webhooks.js';
 
 export * as calendar from './clients/google-calendar.js';
 export * as vexa from './clients/vexa.js';

@@ -5,8 +5,11 @@ import { log } from '../logger.js';
 /**
  * Vexa drops a headless bot into the Meet call and transcribes it.
  *
- * Note: Vexa exposes no outbound webhooks — transcripts are poll-only. That is
- * why the whole pipeline is driven by a repeating tick rather than callbacks.
+ * Vexa does deliver outbound webhooks (`meeting.completed`, `bot.failed`, …)
+ * — see webhooks.ts — and that is the fast path. The polling here is the
+ * fallback: it covers meetings that started before the webhook was configured,
+ * deliveries lost while the app was down, and self-hosted deployments with no
+ * public URL to deliver to.
  */
 
 export type Platform = 'google_meet' | 'teams' | 'zoom' | 'jitsi';

@@ -14,6 +14,10 @@ export interface Config {
   vexaBaseUrl: string;
   vexaBotName: string;
   vexaLanguage: string;
+  /** whsec_… from the Vexa dashboard's Webhooks page. */
+  vexaWebhookSecret: string;
+  /** Escape hatch for first-run debugging only. Never leave enabled. */
+  vexaWebhookInsecure: boolean;
 
   googleClientId: string;
   googleClientSecret: string;
@@ -75,6 +79,8 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Con
     vexaBaseUrl: pick('VEXA_BASE_URL', 'https://api.cloud.vexa.ai').replace(/\/+$/, ''),
     vexaBotName: pick('VEXA_BOT_NAME', 'PRD Bot'),
     vexaLanguage: pick('VEXA_LANGUAGE', 'en'),
+    vexaWebhookSecret: pick('VEXA_WEBHOOK_SECRET'),
+    vexaWebhookInsecure: pick('VEXA_WEBHOOK_INSECURE', '0') === '1',
 
     googleClientId: pick('GOOGLE_CLIENT_ID'),
     googleClientSecret: pick('GOOGLE_CLIENT_SECRET'),

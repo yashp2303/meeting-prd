@@ -279,6 +279,122 @@ export async function tick(
   return result;
 }
 
+/**
+ * Drives one meeting from `transcribed` through to an approval request.
+ *
+ * Used by the Vexa webhook so a completed call produces a PRD within seconds
+ * rather than waiting for the next scheduled tick.
+ */
+export async function processMeeting(
+  id: string,
+  cfg: Config = getConfig(),
+  store: Store = getStore(),
+): Promise<TickResult> {
+  const result: TickResult = {
+    scanned: 0,
+    dispatched: [],
+    collected: [],
+    drafted: [],
+    posted: [],
+    published: [],
+    errors: [],
+  };
+  const record = await store.get(id);
+  if (!record) {
+    result.errors.push({ id, message: 'unknown meeting' });
+    return result;
+  }
+
+  await draftPrds(cfg, store, result);
+  await requestApprovals(cfg, store, result);
+  await publishApproved(cfg, store, result);
+  return result;
+}
+
+/**
+ * Handles a Vexa webhook event.
+ *
+ * The event carries a meeting identifier but not necessarily the transcript,
+ * so the transcript is always fetched over the REST API — that works whatever
+ * shape the payload turns out to have.
+ */
+export async function handleVexaEvent(
+  event: string,
+  meetCode: string,
+  platform: 'google_meet' | 'teams' | 'zoom' | 'jitsi' = 'google_meet',
+  cfg: Config = getConfig(),
+  store: Store = getStore(),
+): Promise<{ handled: boolean; id?: string; message: string }> {
+  const records = await store.list();
+  const record = records.find((r) => r.event.meetCode === meetCode);
+
+  if (!record) {
+    return {
+      handled: false,
+      message: `No tracked meeting matches ${meetCode}. It may not be on the watched calendar.`,
+    };
+  }
+
+  switch (event) {
+    case 'meeting.started': {
+      if (record.stage === 'scheduled' || record.stage === 'dispatched') {
+        await save(store, record, { stage: 'recording' });
+      }
+      return { handled: true, id: record.id, message: 'marked recording' };
+    }
+
+    case 'bot.failed': {
+      await save(store, record, {
+        stage: 'failed',
+        error: 'Vexa reported bot.failed — the bot could not join or was removed from the call',
+      });
+      return { handled: true, id: record.id, message: 'marked failed' };
+    }
+
+    case 'meeting.completed': {
+      if (record.stage === 'published' || record.stage === 'awaiting_approval') {
+        return { handled: true, id: record.id, message: `already ${record.stage}` };
+      }
+
+      const res = await getTranscript(meetCode, platform, cfg);
+      if (!res.ok) {
+        await save(store, record, { error: `Transcript fetch failed: ${res.error}` });
+        return { handled: false, id: record.id, message: res.error };
+      }
+      if (res.segments.length === 0) {
+        await save(store, record, {
+          stage: 'failed',
+          error: 'Vexa reported the meeting complete but returned an empty transcript',
+        });
+        return { handled: true, id: record.id, message: 'empty transcript' };
+      }
+
+      await save(store, record, { stage: 'transcribed', transcript: res.segments });
+      log.info(`webhook: "${record.event.title}" completed with ${res.segments.length} segments`);
+
+      const outcome = await processMeeting(record.id, cfg, store);
+      if (outcome.errors.length) {
+        return { handled: false, id: record.id, message: outcome.errors[0]!.message };
+      }
+      return {
+        handled: true,
+        id: record.id,
+        message: outcome.posted.length
+          ? 'PRD generated and sent to Slack for approval'
+          : outcome.published.length
+            ? 'PRD generated and published to ClickUp'
+            : 'transcript stored',
+      };
+    }
+
+    case 'meeting.status_change':
+      return { handled: true, id: record.id, message: 'status change noted' };
+
+    default:
+      return { handled: false, id: record.id, message: `unhandled event: ${event}` };
+  }
+}
+
 /** Called by the signed Slack link. Publishing happens on the next tick. */
 export async function applyDecision(
   id: string,

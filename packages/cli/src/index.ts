@@ -20,7 +20,7 @@ import { ask, askSecret, confirm, choose, say, ok, fail, warn, info, heading, ta
 import { mergeStored, readStored, applyStoredToEnv, ENV_KEYS } from './config-file.js';
 import { runGoogleAuth, printGoogleSetupHelp } from './google-auth.js';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 function cfg(): Config {
   resetConfigCache();
@@ -99,6 +99,23 @@ async function cmdInit() {
       patch.VEXA_API_KEY = key;
       patch.VEXA_BASE_URL = vexaBase.replace(/\/+$/, '');
       patch.VEXA_BOT_NAME = await ask('Bot display name in the call', existing.VEXA_BOT_NAME ?? 'PRD Bot');
+
+      say('');
+      say(c.grey('  Vexa can push a webhook the moment a meeting ends, which is much'));
+      say(c.grey('  faster than polling. In the Vexa dashboard under Webhooks, set:'));
+      say(`    Endpoint URL   ${c.bold('<your app URL>/api/webhooks/vexa')}`);
+      say(`    Events         ${c.bold('meeting.completed')} (and bot.failed)`);
+      say(c.grey('  then paste the whsec_ signing secret here.'));
+      const whsec = await askSecret(
+        'Vexa webhook signing secret (optional)',
+        existing.VEXA_WEBHOOK_SECRET ?? '',
+      );
+      if (whsec) {
+        patch.VEXA_WEBHOOK_SECRET = whsec;
+        ok('Webhook signature verification enabled.');
+      } else {
+        warn('Skipped — the pipeline will fall back to polling, which is slower.');
+      }
       break;
     }
     fail(`Vexa said: ${probe.error}`);
@@ -476,6 +493,41 @@ async function cmdModels() {
   say('');
 }
 
+/** Prints exactly what to paste into Vexa → Webhooks. */
+function cmdWebhook() {
+  applyStoredToEnv();
+  const config = cfg();
+  const url = `${config.appBaseUrl}/api/webhooks/vexa`;
+
+  heading('Vexa webhook setup');
+  say('  Open the Vexa dashboard → Webhooks, and set:');
+  say('');
+  table([
+    ['Endpoint URL', c.bold(url)],
+    ['Events', c.bold('meeting.completed') + c.grey('  (also enable bot.failed)')],
+    ['Signing Secret', config.vexaWebhookSecret ? c.green('already saved locally') : c.yellow('copy the whsec_ value')],
+  ]);
+  say('');
+
+  if (config.appBaseUrl.includes('localhost')) {
+    warn('APP_BASE_URL is localhost — Vexa cannot reach that.');
+    say(c.grey('  Deploy the app first, or expose it with a tunnel:'));
+    say(c.grey('    npx untun@latest tunnel http://localhost:3000'));
+    say(c.grey('  then re-run: meeting-prd init  (and set the public URL)'));
+    say('');
+  }
+
+  if (!config.vexaWebhookSecret) {
+    warn('VEXA_WEBHOOK_SECRET is not set — the endpoint will accept unsigned posts.');
+    say(c.grey('  Paste the whsec_ value via: meeting-prd init'));
+    say('');
+  }
+
+  info("Vexa's Delivery History panel shows zero even on success (Vexa issue #841).");
+  say(c.grey(`  Check reachability instead with:  curl ${url}`));
+  say('');
+}
+
 function cmdEnv(args: string[]) {
   applyStoredToEnv();
   const stored = readStored();
@@ -514,6 +566,7 @@ function cmdHelp() {
     ['doctor', 'verify config and reach every API'],
     ['google:auth', 'connect Google Calendar (OAuth)'],
     ['clickup:discover', 'list ClickUp spaces/lists and pick a target'],
+    ['webhook', 'print the URL to paste into Vexa → Webhooks'],
     ['models', 'list Groq models'],
   ]);
   say('');
@@ -540,6 +593,7 @@ const COMMANDS: Record<string, (args: string[]) => Promise<void> | void> = {
   doctor: cmdDoctor,
   'google:auth': cmdGoogleAuth,
   'clickup:discover': cmdClickUpDiscover,
+  webhook: cmdWebhook,
   models: cmdModels,
   tick: cmdTick,
   watch: cmdWatch,

@@ -7,9 +7,12 @@ export const maxDuration = 300;
 /**
  * One pass of the pipeline.
  *
- * Vexa has no webhooks and Google Calendar push channels need a verified
- * domain, so a repeating tick is the driver for the whole system. Vercel Cron
- * calls this on Pro; on Hobby the bundled GitHub Actions workflow does instead.
+ * Meetings still have to be *discovered* on a schedule — Google Calendar push
+ * channels need a domain-verified HTTPS endpoint — so the tick remains the
+ * driver for scanning and bot dispatch. Once a bot is in a call the Vexa
+ * webhook usually finishes the job first; this tick is then the safety net for
+ * anything the webhook missed. Vercel Cron calls it on Pro; on Hobby the
+ * bundled GitHub Actions workflow does instead.
  */
 async function run(request: Request) {
   const cfg = getConfig();
