@@ -1,5 +1,5 @@
 import type { CalendarEvent, Prd, TranscriptSegment } from './types.js';
-import { complete, extractJson } from './clients/groq.js';
+import { complete, extractJson, estimateTokens } from './clients/groq.js';
 import { transcriptToText } from './clients/vexa.js';
 import { getConfig, type Config } from './config.js';
 import { log } from './logger.js';
@@ -90,18 +90,33 @@ export const PRD_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/**
+ * The schema is repeated inside the prompt rather than relying solely on the
+ * API's structured-output mode.
+ *
+ * Groq rejects this schema under `json_schema` + `strict` with
+ * json_validate_failed — four levels of nesting (prd > features > stories >
+ * tasks) is past what its constrained decoder handles. Describing the shape in
+ * the prompt and using plain `json_object` produces the full hierarchy
+ * reliably; without it the model returns features with no stories, which would
+ * leave nothing to create in ClickUp.
+ */
 const SYSTEM_PROMPT = `You are a senior product manager writing a Product Requirements Document from a raw meeting transcript.
 
 Rules:
 - Ground every statement in the transcript. Do not invent requirements, names, dates, or metrics that were not discussed.
 - When the transcript is ambiguous or something was left undecided, put it in open_questions rather than guessing.
+- Anything raised but explicitly deferred or parked belongs in non_goals.
 - decisions must contain only things the participants explicitly agreed to.
-- Break work down properly: each feature gets user stories, each story gets concrete engineering tasks.
+- Every feature MUST have at least one story. Every story MUST have at least one task. This is required — a feature with no stories is useless.
 - estimate_points uses a Fibonacci scale (1, 2, 3, 5, 8, 13). estimate_hours is a realistic number for one engineer.
 - Priority: P0 blocks launch, P1 is important, P2 is nice to have, P3 is a backlog idea.
 - Acceptance criteria must be testable and specific — a QA engineer should be able to verify each one.
 - timeline is a rough relative estimate such as "2 sprints". Never invent calendar dates.
 - If the transcript is too thin to support a PRD, still return valid JSON: use a short summary, an empty features array, and explain what is missing in open_questions.
+
+Return JSON matching exactly this schema:
+${JSON.stringify(PRD_SCHEMA)}
 
 Return only the JSON object.`;
 
@@ -182,13 +197,23 @@ export function normalisePrd(raw: unknown, fallbackTitle: string): Prd {
   };
 }
 
-/** Rough guard so a very long transcript cannot blow the context window. */
-function trimTranscript(segments: TranscriptSegment[], maxChars = 320_000): TranscriptSegment[] {
+/**
+ * Keeps the prompt inside the tier's per-minute token budget.
+ *
+ * The binding constraint is usually not the model's context window but the
+ * tokens-per-minute cap, which counts prompt + reserved completion together.
+ * A free Groq tier is 8000/min, so a long meeting has to be truncated — the
+ * tail is kept, since decisions tend to land at the end of a call.
+ */
+function trimTranscript(segments: TranscriptSegment[], cfg: Config): TranscriptSegment[] {
+  const overheadTokens = estimateTokens(SYSTEM_PROMPT) + 400; // + event metadata
+  const availableTokens = cfg.groqTpmLimit - cfg.groqMaxTokens - overheadTokens;
+  const maxChars = Math.max(2000, availableTokens * 4);
+
   let total = 0;
   for (const s of segments) total += s.speaker.length + s.text.length + 2;
   if (total <= maxChars) return segments;
 
-  log.warn(`transcript is ${total} chars — keeping the last ${maxChars}`);
   const kept: TranscriptSegment[] = [];
   let running = 0;
   for (let i = segments.length - 1; i >= 0; i--) {
@@ -197,6 +222,11 @@ function trimTranscript(segments: TranscriptSegment[], maxChars = 320_000): Tran
     if (running > maxChars) break;
     kept.unshift(s);
   }
+  log.warn(
+    `transcript is ~${estimateTokens(String(total))} tokens over budget — ` +
+      `kept the last ${kept.length} of ${segments.length} segments ` +
+      `(tier limit ${cfg.groqTpmLimit}/min)`,
+  );
   return kept;
 }
 
@@ -211,7 +241,7 @@ export async function generatePrd(
   transcript: TranscriptSegment[],
   cfg: Config = getConfig(),
 ): Promise<GenerateResult> {
-  const trimmed = trimTranscript(transcript);
+  const trimmed = trimTranscript(transcript, cfg);
   log.info(`groq: generating PRD for "${event.title}" from ${trimmed.length} segments`);
 
   const result = await complete(
@@ -222,7 +252,6 @@ export async function generatePrd(
       ],
       jsonSchema: { name: 'prd', schema: PRD_SCHEMA },
       temperature: 0.2,
-      maxTokens: 16000,
     },
     cfg,
   );

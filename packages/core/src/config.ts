@@ -5,6 +5,10 @@ import { join } from 'node:path';
 export interface Config {
   groqApiKey: string;
   groqModel: string;
+  /** Completion budget. Counts toward the tier's tokens-per-minute cap. */
+  groqMaxTokens: number;
+  /** Tokens-per-minute ceiling. Free Groq tiers are 8000; paid are far higher. */
+  groqTpmLimit: number;
 
   vexaApiKey: string;
   vexaBaseUrl: string;
@@ -64,6 +68,8 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): Con
   return {
     groqApiKey: pick('GROQ_API_KEY'),
     groqModel: pick('GROQ_MODEL', 'openai/gpt-oss-120b'),
+    groqMaxTokens: Number(pick('GROQ_MAX_TOKENS', '6000')) || 6000,
+    groqTpmLimit: Number(pick('GROQ_TPM_LIMIT', '8000')) || 8000,
 
     vexaApiKey: pick('VEXA_API_KEY'),
     vexaBaseUrl: pick('VEXA_BASE_URL', 'https://api.cloud.vexa.ai').replace(/\/+$/, ''),

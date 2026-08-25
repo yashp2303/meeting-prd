@@ -42,6 +42,8 @@ export function applyStoredToEnv(): void {
 export const ENV_KEYS = [
   'GROQ_API_KEY',
   'GROQ_MODEL',
+  'GROQ_MAX_TOKENS',
+  'GROQ_TPM_LIMIT',
   'VEXA_API_KEY',
   'VEXA_BASE_URL',
   'VEXA_BOT_NAME',

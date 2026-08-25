@@ -130,6 +130,8 @@ working after 7 days. Setup stays at "paste one webhook URL".
 | --- | --- | --- |
 | `GROQ_API_KEY` | — | required |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | `meeting-prd models` lists what your key can reach |
+| `GROQ_MAX_TOKENS` | `6000` | completion budget — see below |
+| `GROQ_TPM_LIMIT` | `8000` | your tier's tokens-per-minute cap |
 | `VEXA_API_KEY` | — | required |
 | `VEXA_BASE_URL` | `https://api.cloud.vexa.ai` | point at `http://localhost:18056` to self-host |
 | `GOOGLE_CLIENT_ID` / `_SECRET` / `_REFRESH_TOKEN` | — | `meeting-prd google:auth` mints the token |
@@ -144,6 +146,29 @@ working after 7 days. Setup stays at "paste one webhook URL".
 | `IDLE_TIMEOUT_MINUTES` | `5` | transcript silence before a call counts as over |
 | `AUTO_APPROVE` | `0` | `1` skips Slack and publishes straight to ClickUp |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | — | see below |
+
+### Groq tier limits
+
+Two things about Groq shape how PRDs are generated, both learned the hard way:
+
+**Tokens-per-minute counts the budget you reserve, not what you use.** A free
+tier is 8000 TPM. Asking for a 16000-token completion fails with a 413 before
+the model writes anything, even on a short transcript. `GROQ_MAX_TOKENS`
+defaults to 6000 to stay inside that. If a request still overflows, the client
+parses the limit out of the error and refits automatically rather than giving
+up, and long transcripts are truncated from the front to fit — decisions
+usually land at the end of a call.
+
+**Strict structured output does not survive deep nesting.** The PRD schema is
+four levels deep (`prd > features > stories > tasks`) and Groq rejects it under
+`response_format: json_schema` with `json_validate_failed`. The schema is
+therefore included in the prompt and plain `json_object` mode is used instead.
+This is not a cosmetic difference: under strict mode the model returned
+features with **zero stories**, which would have left nothing to create in
+ClickUp.
+
+On a paid tier, raise both variables — a larger completion budget lets the model
+write longer PRDs before truncating.
 
 ### State
 
