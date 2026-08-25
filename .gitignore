@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+.meeting-prd/
+*.pem
+credentials.json
+token.json
+
+.DS_Store
+.vercel
+npm-debug.log*

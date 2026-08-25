@@ -1,0 +1,22 @@
+{
+  "name": "meeting-prd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Calendar -> Vexa bot -> Google Meet transcript -> Groq PRD -> Slack approval -> ClickUp tickets",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build -w @meeting-prd/core && npm run build -w @meeting-prd/cli && npm run build -w @meeting-prd/web",
+    "build:core": "npm run build -w @meeting-prd/core",
+    "build:web": "npm run build -w @meeting-prd/core && npm run build -w @meeting-prd/web",
+    "dev": "npm run build -w @meeting-prd/core && npm run dev -w @meeting-prd/web",
+    "typecheck": "npm run typecheck -w @meeting-prd/core && npm run typecheck -w @meeting-prd/cli",
+    "cli": "node packages/cli/dist/index.js"
+  }
+}
