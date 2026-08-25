@@ -50,48 +50,86 @@ export async function ask(question: string, fallback = ''): Promise<string> {
  * Secrets are read with terminal echo suppressed so keys never end up visible
  * on screen or in a scrollback buffer.
  */
+const ENTER = ['\r', '\n'];
+const CTRL_C = '\u0003';
+const CTRL_D = '\u0004';
+const BACKSPACE = ['\u007f', '\b'];
+
+/**
+ * Reads a secret with the characters masked.
+ *
+ * Three things make this fiddlier than it looks:
+ *
+ * 1. A paste arrives as a single chunk, not one keystroke at a time, so the
+ *    chunk must be walked character by character rather than compared whole.
+ * 2. Terminals wrap pastes in bracketed-paste escapes (ESC[200~ ... ESC[201~).
+ *    Appending those verbatim corrupts the value, so an API key pasted that
+ *    way is rejected as invalid -- which looks like a wrong key rather than a
+ *    bug in this function.
+ * 3. readline and a raw-mode listener cannot share stdin. Pausing stdin here
+ *    leaves the shared readline interface dead, so the *next* prompt reads EOF
+ *    and the process exits. Tear it down first and let it rebuild lazily.
+ */
 export async function askSecret(question: string, fallback = ''): Promise<string> {
   if (!stdin.isTTY) return ask(question, fallback);
 
-  const suffix = fallback ? c.grey(` [${fallback.slice(0, 6)}…]`) : '';
+  closePrompts();
+
+  const suffix = fallback ? c.grey(` [${fallback.slice(0, 6)}\u2026]`) : '';
   stdout.write(`${c.cyan('?')} ${question}${suffix}: `);
 
   return new Promise((resolve) => {
     const previouslyRaw = stdin.isRaw;
     stdin.setRawMode(true);
     stdin.resume();
+
     let buf = '';
+    let done = false;
+
+    const finish = (value: string) => {
+      if (done) return;
+      done = true;
+      stdin.removeListener('data', onData);
+      stdin.setRawMode(previouslyRaw ?? false);
+      stdin.pause();
+      stdout.write('\n');
+      resolve(value);
+    };
 
     const onData = (chunk: Buffer) => {
-      const ch = chunk.toString('utf8');
-      switch (ch) {
-        case '\n':
-        case '\r':
-        case '':
-          stdin.setRawMode(previouslyRaw ?? false);
-          stdin.pause();
-          stdin.removeListener('data', onData);
-          stdout.write('\n');
-          resolve(buf.trim() || fallback);
-          break;
-        case '':
+      // Strip bracketed-paste markers and any other CSI escape sequence before
+      // inspecting individual characters.
+      const text = chunk
+        .toString('utf8')
+        .replace(/\u001b\[20[01]~/g, '')
+        .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+
+      for (const ch of text) {
+        if (done) return;
+
+        if (ENTER.includes(ch) || ch === CTRL_D) {
+          finish(buf.trim() || fallback);
+          return;
+        }
+        if (ch === CTRL_C) {
           stdout.write('\n');
           process.exit(130);
-          break;
-        case '':
-        case '\b':
+        }
+        if (BACKSPACE.includes(ch)) {
           if (buf.length) {
             buf = buf.slice(0, -1);
             stdout.write('\b \b');
           }
-          break;
-        default:
-          if (ch >= ' ') {
-            buf += ch;
-            stdout.write('•');
-          }
+          continue;
+        }
+        // Ignore any remaining control characters; mask everything printable.
+        if (ch >= ' ' && ch !== '\u007f') {
+          buf += ch;
+          stdout.write('\u2022');
+        }
       }
     };
+
     stdin.on('data', onData);
   });
 }
