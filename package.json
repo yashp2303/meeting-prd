@@ -1,6 +1,6 @@
 {
   "name": "meeting-prd",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Calendar -> Vexa bot -> Google Meet transcript -> Groq PRD -> Slack approval -> ClickUp tickets",
   "license": "MIT",

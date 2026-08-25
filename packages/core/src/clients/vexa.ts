@@ -137,3 +137,77 @@ export async function getTranscript(
 export function transcriptToText(segments: TranscriptSegment[]): string {
   return segments.map((s) => `${s.speaker}: ${s.text}`).join('\n');
 }
+
+export interface WebhookConfig {
+  url: string;
+  secret?: string;
+  events?: string[];
+}
+
+/**
+ * Configures Vexa's webhook delivery over the API.
+ *
+ * The dashboard has a Webhooks screen, but its Save button returns "Failed to
+ * save webhook config" while the Test button succeeds — and Vexa's own docs
+ * still describe configuration as "API-only via PUT /user/webhook" with "No
+ * settings UI". So the UI is ahead of the backend and this is the path that
+ * actually persists.
+ *
+ * The request body shape is undocumented, so several plausible shapes are
+ * tried and the raw response from each is returned for diagnosis.
+ */
+export async function configureWebhook(
+  config: WebhookConfig,
+  cfg: Config = getConfig(),
+): Promise<{ ok: boolean; attempts: { path: string; method: string; status: number; body: string }[] }> {
+  const events = config.events ?? ['meeting.completed', 'bot.failed', 'meeting.started'];
+
+  const bodies: Record<string, unknown>[] = [
+    { url: config.url, secret: config.secret, events },
+    { webhook_url: config.url, webhook_secret: config.secret, events },
+    { url: config.url, signing_secret: config.secret, events },
+    { url: config.url },
+  ];
+
+  const routes: { path: string; method: string }[] = [
+    { path: '/user/webhook', method: 'PUT' },
+    { path: '/user/webhook', method: 'POST' },
+    { path: '/webhooks', method: 'PUT' },
+    { path: '/webhooks', method: 'POST' },
+  ];
+
+  const attempts: { path: string; method: string; status: number; body: string }[] = [];
+
+  for (const route of routes) {
+    for (const body of bodies) {
+      const payload = Object.fromEntries(
+        Object.entries(body).filter(([, v]) => v !== undefined),
+      );
+      let res: Response;
+      try {
+        res = await fetch(`${cfg.vexaBaseUrl}${route.path}`, {
+          method: route.method,
+          headers: headers(cfg),
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        attempts.push({ ...route, status: 0, body: String(err).slice(0, 200) });
+        continue;
+      }
+
+      const text = (await res.text()).slice(0, 300);
+      attempts.push({ ...route, status: res.status, body: text });
+
+      if (res.ok) return { ok: true, attempts };
+      // A 404 means this route does not exist — stop trying body shapes on it.
+      if (res.status === 404) break;
+    }
+  }
+
+  return { ok: false, attempts };
+}
+
+/** Reads back whatever webhook config Vexa currently holds. */
+export async function getWebhookConfig(cfg: Config = getConfig()) {
+  return request<unknown>('/user/webhook', { method: 'GET' }, cfg);
+}

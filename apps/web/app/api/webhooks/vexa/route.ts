@@ -31,7 +31,32 @@ export async function POST(request: Request) {
   const verified = verifyVexaWebhook(rawBody, request.headers, cfg);
   if (!verified.ok) {
     log.error(`vexa webhook rejected: ${verified.reason}`);
-    return NextResponse.json({ ok: false, error: verified.reason }, { status: 401 });
+    log.error(`vexa webhook body was: ${rawBody.slice(0, 400)}`);
+
+    // Vexa's dashboard "Test" button fires from the browser and sends no
+    // signature, so a 401 here is expected and does not mean the endpoint is
+    // misconfigured. Say so in the response rather than leaving a bare 401.
+    const unsigned = verified.reason?.includes('no recognised signature header');
+    return NextResponse.json(
+      {
+        ok: false,
+        error: verified.reason,
+        ...(unsigned
+          ? {
+              likelyCause:
+                "This request carried no signature header. Vexa's dashboard Test button " +
+                'sends unsigned requests from the browser, so it will always fail while ' +
+                'VEXA_WEBHOOK_SECRET is set.',
+              options: [
+                'Set VEXA_WEBHOOK_INSECURE=1 to accept unsigned deliveries (endpoint becomes open).',
+                'Or leave verification on and ignore the Test button — real deliveries from ' +
+                  "Vexa's queue are signed and will be accepted.",
+              ],
+            }
+          : {}),
+      },
+      { status: 401 },
+    );
   }
 
   let payload: VexaWebhookPayload;

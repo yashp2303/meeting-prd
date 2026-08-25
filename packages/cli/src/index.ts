@@ -20,7 +20,7 @@ import { ask, askSecret, confirm, choose, say, ok, fail, warn, info, heading, ta
 import { mergeStored, readStored, applyStoredToEnv, ENV_KEYS } from './config-file.js';
 import { runGoogleAuth, printGoogleSetupHelp } from './google-auth.js';
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 
 function cfg(): Config {
   resetConfigCache();
@@ -547,6 +547,62 @@ async function cmdModels() {
   say('');
 }
 
+/**
+ * Configures Vexa's webhook over its API.
+ *
+ * The dashboard's Save button reports "Failed to save webhook config" even
+ * though its Test button succeeds, and Vexa's docs still call configuration
+ * API-only. This writes the config the way that actually persists.
+ */
+async function cmdWebhookInstall(args: string[]) {
+  applyStoredToEnv();
+  const config = cfg();
+
+  const urlArg = args.find((a) => a.startsWith('--url='))?.split('=').slice(1).join('=');
+  const secretArg = args.find((a) => a.startsWith('--secret='))?.split('=').slice(1).join('=');
+
+  const url = urlArg ?? `${config.appBaseUrl}/api/webhooks/vexa`;
+  const secret = secretArg ?? config.vexaWebhookSecret;
+
+  if (!config.vexaApiKey) {
+    fail('No Vexa API key configured. Run `meeting-prd init` first, or export VEXA_API_KEY.');
+    return;
+  }
+  if (url.includes('localhost') || url.includes('127.0.0.1')) {
+    fail(`Vexa cannot deliver to ${url}. Deploy the app or expose it with a tunnel first.`);
+    return;
+  }
+
+  heading('Installing webhook config into Vexa');
+  table([
+    ['endpoint', url],
+    ['secret', secret ? `${secret.slice(0, 10)}…` : c.yellow('(none — deliveries will be unsigned)')],
+    ['events', 'meeting.completed, bot.failed, meeting.started'],
+  ]);
+  say('');
+
+  const result = await spin('writing config via the Vexa API…', () =>
+    vexa.configureWebhook({ url, secret: secret || undefined }, config),
+  );
+
+  if (result.ok) {
+    const winner = result.attempts[result.attempts.length - 1]!;
+    ok(`Vexa accepted the config (${winner.method} ${winner.path}).`);
+    if (secret) mergeStored({ VEXA_WEBHOOK_SECRET: secret });
+    return;
+  }
+
+  fail('Vexa rejected every known way of writing this config.');
+  say('');
+  say(c.grey('  Attempts:'));
+  for (const a of result.attempts) {
+    const code = a.status === 0 ? 'network' : String(a.status);
+    say(c.grey(`    ${a.method.padEnd(5)} ${a.path.padEnd(16)} ${code.padEnd(8)} ${a.body.slice(0, 90)}`));
+  }
+  say('');
+  info('Send these lines to whoever is debugging — they show exactly what Vexa answered.');
+}
+
 /** Prints exactly what to paste into Vexa → Webhooks. */
 function cmdWebhook() {
   applyStoredToEnv();
@@ -621,6 +677,7 @@ function cmdHelp() {
     ['google:auth', 'connect Google Calendar (OAuth)'],
     ['clickup:discover', 'list ClickUp spaces/lists and pick a target'],
     ['webhook', 'print the URL to paste into Vexa → Webhooks'],
+    ['webhook --install', 'write that config into Vexa via its API'],
     ['models', 'list Groq models'],
   ]);
   say('');
@@ -647,7 +704,7 @@ const COMMANDS: Record<string, (args: string[]) => Promise<void> | void> = {
   doctor: cmdDoctor,
   'google:auth': cmdGoogleAuth,
   'clickup:discover': cmdClickUpDiscover,
-  webhook: cmdWebhook,
+  webhook: (a) => (a.includes('--install') ? cmdWebhookInstall(a) : cmdWebhook()),
   models: cmdModels,
   tick: cmdTick,
   watch: cmdWatch,

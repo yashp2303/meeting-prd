@@ -1,9 +1,9 @@
 class MeetingPrd < Formula
   desc "Google Meet transcript to ClickUp tickets, with a Slack approval gate"
   homepage "https://github.com/yashp2303/meeting-prd"
-  url "https://github.com/yashp2303/meeting-prd/releases/download/v0.1.5/meeting-prd.js"
-  sha256 "21f67603da4e7c8ba790412c76d17a3e62560e5aea15c05cdcb412e379810351"
-  version "0.1.5"
+  url "https://github.com/yashp2303/meeting-prd/releases/download/v0.1.6/meeting-prd.js"
+  sha256 "3df5b2e2b3f3f92fb24cf43fc9ccc1f97df8bcfc07264495385baab50e25547c"
+  version "0.1.6"
   license "MIT"
 
   # The CLI ships as one esbuild bundle with no runtime dependencies, so node
